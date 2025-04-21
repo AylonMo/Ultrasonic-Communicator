@@ -1,22 +1,17 @@
+import random
+
 from consts import *
 
 
-def extract_message(binary_string: str):
-    """
-    Extracts the message between two identical binary pads
-    that appear at the start and end of the string.
-    """
+def pad_maker():
+    """Generates a list of 10 frequency sublist (for transmitting pads)."""
 
-    try:
-        start = binary_string.index(PAD)
-        finish = binary_string.index(PAD, start + len(PAD))
-        message = binary_string[start + len(PAD): finish]
-        return message
-
-    except ValueError as ve:
-        print("ValueError")
-        return binary_string
-
+    random_lists = []
+    for _ in range(10):
+        length = random.randint(2, 10)
+        sublist = [random.randint(FREQ_MIN, FREQ_MAX) for _ in range(length)]
+        random_lists.append(sublist)
+    return random_lists
 
 
 def string_to_binary(text: str):
