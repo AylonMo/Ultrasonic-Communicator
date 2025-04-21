@@ -18,6 +18,7 @@ def extract_message(binary_string: str):
         return binary_string
 
 
+
 def string_to_binary(text: str):
     return ''.join(format(ord(char), '08b') for char in text)
 
