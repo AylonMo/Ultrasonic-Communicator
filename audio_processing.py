@@ -1,154 +1,164 @@
 import numpy as np
-import sounddevice as sd
-from scipy.fft import fft
-from scipy.signal import correlate, find_peaks
+from scipy.signal import butter, lfilter
+from scipy.fft import fft, fftfreq
 import matplotlib.pyplot as plt
-from datetime import datetime
+import sounddevice as sd
 
-from consts import *
+from consts import (
+    SAMPLE_RATE,
+    BIT_DURATION,
+    LISTEN_DURATION,
+    N_CHANNELS,
+    FREQ_PAIRS,
+    FREQ_MIN,
+    FREQ_MAX,
+    PAD,
+)
 
 
-def generate_tone_from_frequencies(freqs):
+def get_pad_wave() -> np.ndarray:
     """
-    Create a single waveform segment by summing sine waves at each frequency in `freqs`,
-    lasting BIT_DURATION seconds at SAMPLE_RATE Hz.
+    Generate the known pad preamble by concatenating each multi-frequency segment.
     """
-
-    # time axis for this bit segment
-    time = np.linspace(0, BIT_DURATION, int(SAMPLE_RATE * BIT_DURATION), endpoint=False)
-    segment = np.zeros_like(time, dtype=np.float32)
-
-    # add each frequency component
-    for freq in freqs:
-        segment += 0.5 * np.sin(2 * np.pi * freq * time)
-
-    # normalize amplitude to avoid clipping
-    segment /= len(freqs)
-    return segment
+    segments = []
+    for freqs in PAD:
+        t = np.linspace(0, BIT_DURATION, int(SAMPLE_RATE * BIT_DURATION), endpoint=False)
+        segment = np.zeros_like(t)
+        for f in freqs:
+            segment += (0.5 / len(freqs)) * np.sin(2 * np.pi * f * t)
+        segments.append(segment)
+    return np.concatenate(segments).astype(np.float32)
 
 
-def get_pad_wave():
+def record_audio() -> np.ndarray:
     """
-    Build the preamble/postamble 'pad' by concatenating tone segments.
-    Each entry in PAD is a list of frequencies for one pad segment.
+    Record audio for LISTEN_DURATION seconds at SAMPLE_RATE.
     """
-
-    pad_wave = np.array([], dtype=np.float32)
-    for segment_freqs in PAD:
-        segment_wave = generate_tone_from_frequencies(segment_freqs)
-        pad_wave = np.concatenate((pad_wave, segment_wave))
-    return pad_wave
+    rec = sd.rec(int(LISTEN_DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1)
+    sd.wait()
+    return rec.flatten()
 
 
-def record_audio():
+def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: int, order: int = 5) -> np.ndarray:
     """
-    Record a mono audio signal for LISTEN_DURATION seconds
-    at SAMPLE_RATE Hz, and return it as a 1D NumPy array.
+    Apply a Butterworth band-pass filter.
     """
-
-    print("Recording...", datetime.now())
-    rec = sd.rec(int(LISTEN_DURATION * SAMPLE_RATE),
-                 samplerate=SAMPLE_RATE,
-                 channels=1)
-    sd.wait()  # block until the recording is finished
-    print("Recording complete.", datetime.now())
-    return rec.flatten()  # convert shape (N,1) → (N,)
+    ny = 0.5 * fs
+    b, a = butter(order, [lowcut / ny, highcut / ny], btype='band')
+    return lfilter(b, a, data)
 
 
-def find_time_delays(pad_signal, received_signal):
+def plot_spectrogram(sig: np.ndarray, title: str = "Spectrogram") -> None:
     """
-    Cross‑correlate `received_signal` against `pad_signal` to locate
-    two occurrences of the pad. Returns a sorted list of two tuples:
-      [(lag_samples1, lag_secs1), (lag_samples2, lag_secs2)].
+    Display a time‑frequency spectrogram of `sig` at SAMPLE_RATE Hz,
+    limited to the band 20000–24000 Hz.
     """
-
-    # Normalize both signals to zero mean, unit variance
-    ps = (pad_signal - pad_signal.mean()) / pad_signal.std()
-    rs = (received_signal - received_signal.mean()) / received_signal.std()
-
-    # Full cross‑correlation and corresponding lag values
-    corr = correlate(rs, ps, mode='full')
-    lags = np.arange(-len(ps) + 1, len(rs))
-
-    # Find local maxima at least ~pad_length apart
-    min_dist = int(len(ps) * 0.8)
-    peaks, _ = find_peaks(corr, distance=min_dist)
-    if len(peaks) < 2:
-        raise RuntimeError("Could not find two pad occurrences.")
-
-    # Select the two highest peaks by correlation magnitude
-    top2 = peaks[np.argsort(corr[peaks])[-2:]]
-    delays = [(lags[p], lags[p] / SAMPLE_RATE) for p in top2]
-
-    # Sort by sample index so we know which comes first
-    return sorted(delays, key=lambda x: x[0])
-
-
-def process_audio_to_bits(signal):
-    """
-    Split the incoming `signal` into consecutive BIT_DURATION‑long blocks,
-    subdivide each block into 7 sub‑blocks, run an FFT on each sub‑block
-    (ignoring frequencies below FREQ_MIN), take the median of those peak
-    frequencies, and convert to '0' or '1' by comparing to the midpoint
-    of ZERO_FREQ and ONE_FREQ.
-    """
-
-    block_size = int(BIT_DURATION * SAMPLE_RATE)
-    sub_count = 7
-    sub_size = block_size // sub_count
-
-    bits = []
-    skipping = True
-
-    for start in range(0, len(signal), block_size):
-        block = signal[start : start + block_size]
-        if len(block) < block_size:
-            block = np.pad(block, (0, block_size - len(block)))
-
-        peak_freqs = []
-        for j in range(sub_count):
-            sub = block[j * sub_size : (j + 1) * sub_size]
-            X = fft(sub)
-            mags = np.abs(X[: sub_size // 2])
-            freqs = np.fft.fftfreq(sub_size, 1 / SAMPLE_RATE)[: sub_size // 2]
-
-            # Mask out all frequencies below FREQ_MIN
-            mask = freqs >= FREQ_MIN
-            if not np.any(mask):
-                peak_freqs.append(0.0)
-            else:
-                freqs_above = freqs[mask]
-                mags_above = mags[mask]
-                peak_freqs.append(freqs_above[np.argmax(mags_above)])
-
-        median_peak = np.median(peak_freqs)
-
-        # Skip over initial silence or pad‑noise until we see a valid bit
-        if median_peak < FREQ_MIN and skipping:
-            continue
-        skipping = False
-
-        # Bit = '1' if above midpoint, else '0'
-        midpoint = (ZERO_FREQ + ONE_FREQ) / 2
-        bits.append(ONE if median_peak > midpoint else ZERO)
-
-    return "".join(bits)
-
-
-def plot_spectrogram(sig, title="Spectrogram"):
-    """
-    Display a time‑frequency spectrogram of `sig` at SAMPLE_RATE Hz.
-    """
-
     plt.figure(figsize=(10, 4))
-    plt.specgram(sig,
-                 Fs=SAMPLE_RATE,
-                 NFFT=1024,
-                 noverlap=512,
-                 cmap='viridis')
+    Pxx, freqs, bins, im = plt.specgram(
+        sig,
+        Fs=SAMPLE_RATE,
+        NFFT=1024,
+        noverlap=512,
+    )
+    plt.ylim(FREQ_MIN-500, 24000)
     plt.title(title)
     plt.xlabel("Time (s)")
     plt.ylabel("Frequency (Hz)")
     plt.colorbar(label='Intensity (dB)')
     plt.tight_layout()
     plt.show()
+
+def find_time_delays(pad_wave: np.ndarray,
+                     rec: np.ndarray,
+                     min_distance: int | None = None
+                    ) -> tuple[tuple[int, float], tuple[int, float]]:
+    """
+    Cross-correlate pad_wave with rec, plot the correlation and mark
+    the two highest peaks (at least `min_distance` apart), and return
+    their indices + values in chronological order.
+    """
+    corr = np.correlate(rec, pad_wave, mode='valid')
+
+    # default min distance to one pad‑length if not specified
+    if min_distance is None:
+        min_distance = len(pad_wave)
+
+    # 1) find the global maximum
+    p1 = int(np.argmax(corr))
+
+    # 2) mask out neighborhood around p1
+    corr_masked = corr.copy()
+    start = max(0, p1 - min_distance)
+    end   = min(len(corr), p1 + min_distance + 1)
+    corr_masked[start:end] = -np.inf
+
+    # 3) next highest peak
+    p2 = int(np.argmax(corr_masked))
+
+    # sort so the earlier peak comes first
+    p_early, p_late = sorted([p1, p2])
+    v_early, v_late = corr[p_early], corr[p_late]
+
+    # --- plot the full correlation and annotate peaks ---
+    plt.figure(figsize=(10, 4))
+    plt.plot(corr, label='cross-correlation')
+    plt.scatter([p_early, p_late], [v_early, v_late],
+                color='red', zorder=5,
+                label=f'peaks at {p_early}, {p_late}')
+    plt.axvline(p_early, color='red', linestyle='--', alpha=0.5)
+    plt.axvline(p_late, color='red', linestyle='--', alpha=0.5)
+    plt.title("Cross‑correlation between recording and pad")
+    plt.xlabel("Lag (samples)")
+    plt.ylabel("Correlation amplitude")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    return (p_early, float(v_early)), (p_late, float(v_late))
+
+
+
+
+def process_audio_to_bits(msg_sig: np.ndarray) -> str:
+    """
+    Demodulate the multi-channel FSK:
+    - split msg_sig into frames of BIT_DURATION
+    - subdivide each frame into sub_count sub-blocks
+    - for each channel, in each sub-block compare energy at its two tones
+      and vote on 0 vs 1
+    - take majority vote per channel per frame
+    - reassemble bits in the original round-robin order
+    """
+    frame_len = int(BIT_DURATION * SAMPLE_RATE)
+    num_frames = len(msg_sig) // frame_len
+    sub_count = 15
+    sub_len = frame_len // sub_count
+
+    # collect bits per channel
+    channel_bits = [[] for _ in range(N_CHANNELS)]
+
+    for i in range(num_frames):
+        frame = msg_sig[i * frame_len : (i + 1) * frame_len]
+        for ch in range(N_CHANNELS):
+            f0, f1 = FREQ_PAIRS[ch]
+            votes = 0
+            for j in range(sub_count):
+                sub = frame[j * sub_len : (j + 1) * sub_len]
+                X = fft(sub)
+                mags = np.abs(X)
+                freqs = fftfreq(len(sub), 1 / SAMPLE_RATE)
+                idx0 = np.argmin(np.abs(freqs - f0))
+                idx1 = np.argmin(np.abs(freqs - f1))
+                votes += 1 if mags[idx1] > mags[idx0] else 0
+            # decide bit by majority vote
+            bit = '1' if votes > sub_count / 2 else '0'
+            channel_bits[ch].append(bit)
+
+    # reassemble bits in round-robin
+    bits = []
+    max_len = max(len(cb) for cb in channel_bits)
+    for k in range(max_len):
+        for ch in range(N_CHANNELS):
+            if k < len(channel_bits[ch]):
+                bits.append(channel_bits[ch][k])
+    return ''.join(bits)

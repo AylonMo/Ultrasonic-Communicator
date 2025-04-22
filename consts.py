@@ -1,25 +1,31 @@
 # Sampling & timing
 SAMPLE_RATE = 48_000    # samples per second when recording or playing back
-BIT_DURATION = 0.04     # seconds per bit tone
-LISTEN_DURATION = 12    # seconds to record for each reception
+BIT_DURATION = 0.15     # seconds per bit tone
+LISTEN_DURATION = 14    # seconds to record for each reception
+
+# Parallel channels: how many bits to send in parallel per symbol period
+N_CHANNELS = 5  # adjust this to your desired level of parallelism
+
+# Frequency band to carve into 2 * N_CHANNELS tones
+FREQ_MIN = 21_500       # lower cutoff, below which we ignore frequency peaks
+FREQ_MAX = 23_500       # upper cutoff, above which we ignore
+
+# Dynamically generate 2*N_CHANNELS uniformly spaced frequencies
+import numpy as np
+_all_freqs = np.linspace(FREQ_MIN, FREQ_MAX, 2 * N_CHANNELS)
+FREQ_PAIRS = list(zip(_all_freqs[0::2], _all_freqs[1::2]))
+# FREQ_PAIRS[i] = (freq_for_0, freq_for_1) for channel i
 
 # Bit definitions
 ZERO = '0'              # symbol for a “0” bit
 ONE = '1'               # symbol for a “1” bit
 
-# Frequencies (Hz) for each bit
+# Original single‑channel bit frequencies (for backward compatibility)
 ZERO_FREQ = 22_500      # frequency used to encode a '0'
 ONE_FREQ = 23_500       # frequency used to encode a '1'
 BIT_FREQ_MAP = {ZERO: ZERO_FREQ, ONE: ONE_FREQ}
 
-# Band‑pass filter thresholds (Hz)
-FREQ_MIN = 21_000       # lower cutoff, below which we ignore frequency peaks
-FREQ_MAX = 24_000       # upper cutoff, above which we ignore
-
-# Padding used to frame the message
-BIN_PAD = "1010101110001110101011100011"
-
-# Each sub‑list in PAD is a sequence of frequencies (Hz) for one pad segment
+# Padding used to frame the message\ nBIN_PAD = "1010101110001110101011100011"
 PAD = [
     [21551, 21226, 22573, 23493, 22320, 21268],
     [23931, 23200, 23775, 22212, 21484, 23231, 22355, 21239, 21607, 22988],
@@ -34,4 +40,8 @@ PAD = [
 ]
 
 # The actual text message to send/receive
-MESSAGE = "I buried Paul!"
+MESSAGE = "The red fox jumped"# over the white hill!"
+
+
+
+
