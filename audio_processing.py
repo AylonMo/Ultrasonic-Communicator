@@ -19,14 +19,25 @@ from consts import (
 def get_pad_wave() -> np.ndarray:
     """
     Generate the known pad preamble by concatenating each multi-frequency segment.
+    Each segment has fade-in and fade-out to reduce clicking.
     """
     segments = []
+    fade_samples = int(0.002 * SAMPLE_RATE)  # 2 ms fade
+    fade_in = np.linspace(0, 1, fade_samples)
+    fade_out = np.linspace(1, 0, fade_samples)
+
     for freqs in PAD:
         t = np.linspace(0, BIT_DURATION, int(SAMPLE_RATE * BIT_DURATION), endpoint=False)
         segment = np.zeros_like(t)
         for f in freqs:
             segment += (0.5 / len(freqs)) * np.sin(2 * np.pi * f * t)
+
+        # Apply fade-in and fade-out
+        segment[:fade_samples] *= fade_in
+        segment[-fade_samples:] *= fade_out
+
         segments.append(segment)
+
     return np.concatenate(segments).astype(np.float32)
 
 
@@ -117,22 +128,10 @@ def find_time_delays(pad_wave: np.ndarray,
     return (p_early, float(v_early)), (p_late, float(v_late))
 
 
-
-
 def process_audio_to_bits(msg_sig: np.ndarray) -> str:
-    """
-    Demodulate the multi-channel FSK:
-    - split msg_sig into frames of BIT_DURATION
-    - subdivide each frame into sub_count sub-blocks
-    - for each channel, in each sub-block compare energy at its two tones
-      and vote on 0 vs 1
-    - take majority vote per channel per frame
-    - reassemble bits in the original round-robin order
-    """
+
     frame_len = int(BIT_DURATION * SAMPLE_RATE)
     num_frames = len(msg_sig) // frame_len
-    sub_count = 15
-    sub_len = frame_len // sub_count
 
     # collect bits per channel
     channel_bits = [[] for _ in range(N_CHANNELS)]
@@ -141,17 +140,12 @@ def process_audio_to_bits(msg_sig: np.ndarray) -> str:
         frame = msg_sig[i * frame_len : (i + 1) * frame_len]
         for ch in range(N_CHANNELS):
             f0, f1 = FREQ_PAIRS[ch]
-            votes = 0
-            for j in range(sub_count):
-                sub = frame[j * sub_len : (j + 1) * sub_len]
-                X = fft(sub)
-                mags = np.abs(X)
-                freqs = fftfreq(len(sub), 1 / SAMPLE_RATE)
-                idx0 = np.argmin(np.abs(freqs - f0))
-                idx1 = np.argmin(np.abs(freqs - f1))
-                votes += 1 if mags[idx1] > mags[idx0] else 0
-            # decide bit by majority vote
-            bit = '1' if votes > sub_count / 2 else '0'
+            X = fft(frame)
+            mags = np.abs(X)
+            freqs = fftfreq(len(frame), 1 / SAMPLE_RATE)
+            idx0 = np.argmin(np.abs(freqs - f0))
+            idx1 = np.argmin(np.abs(freqs - f1))
+            bit = '1' if mags[idx1] > mags[idx0] / 2 else '0'
             channel_bits[ch].append(bit)
 
     # reassemble bits in round-robin

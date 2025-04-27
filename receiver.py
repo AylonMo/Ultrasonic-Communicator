@@ -1,6 +1,6 @@
 from audio_processing import *
 from utils import binary_to_string
-from data_management import fix_errors
+from data_management import fix_errors, remove_preamble
 
 def main():
     # Build the known pad waveform used to mark the start/end of the message
@@ -8,9 +8,6 @@ def main():
     # Record raw audio from the microphone for LISTEN_DURATION seconds
     print("Recording...")
     rec = record_audio()
-
-    # Clean up the recording by filtering out-of-band noise (optional)
-    # rec = bandpass_filter(rec, FREQ_MIN, FREQ_MAX, SAMPLE_RATE)
 
     # Display the spectrogram of the entire recording
     plot_spectrogram(rec, "Full Recording")
@@ -25,11 +22,14 @@ def main():
 
     # Convert the message audio into a string of bits
     bit_string = process_audio_to_bits(msg_sig)
-    print("Bit sequence:", bit_string)
+    print("received:", bit_string)
     print("Received message length:", len(bit_string))
 
-    # bit_string = fix_errors(bit_string)
+    bit_string = fix_errors(bit_string)
     print("Received fixed message length:", len(bit_string))
+
+    bit_string = remove_preamble(bit_string)
+    print("Bit sequence:", bit_string)
 
     # Decode the bit string into readable text
     text = binary_to_string(bit_string)

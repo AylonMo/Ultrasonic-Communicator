@@ -1,14 +1,14 @@
 # Sampling & timing
 SAMPLE_RATE = 48_000    # samples per second when recording or playing back
-BIT_DURATION = 0.15     # seconds per bit tone
-LISTEN_DURATION = 14    # seconds to record for each reception
+BIT_DURATION = 0.03     # seconds per bit tone
+LISTEN_DURATION = 10    # seconds to record for each reception
 
 # Parallel channels: how many bits to send in parallel per symbol period
-N_CHANNELS = 5  # adjust this to your desired level of parallelism
+N_CHANNELS = 8  # adjust this to your desired level of parallelism
 
 # Frequency band to carve into 2 * N_CHANNELS tones
-FREQ_MIN = 21_500       # lower cutoff, below which we ignore frequency peaks
-FREQ_MAX = 23_500       # upper cutoff, above which we ignore
+FREQ_MIN = 21_200       # lower cutoff, below which we ignore frequency peaks
+FREQ_MAX = 23_800       # upper cutoff, above which we ignore
 
 # Dynamically generate 2*N_CHANNELS uniformly spaced frequencies
 import numpy as np
@@ -40,7 +40,7 @@ PAD = [
 ]
 
 # The actual text message to send/receive
-MESSAGE = "The red fox jumped"# over the white hill!"
+MESSAGE = "aaaaaaaaaaaa bbbbbbbbbbbbbb ccccccccccccccccc ddddddddddddddd 11111111111111 2222222222222222 333333333333333333 44444444444444"
 
 
 

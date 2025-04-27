@@ -1,4 +1,12 @@
 import numpy as np
+from consts import *
+
+def add_preamble(message):
+    return "0" * (N_CHANNELS - (len(message) % N_CHANNELS)) + "1"*N_CHANNELS + message
+
+def remove_preamble(message):
+    return message[message.index("1") + N_CHANNELS:]
+
 
 def add_error_fixer(bitstring):
     """
@@ -14,7 +22,7 @@ def add_error_fixer(bitstring):
     encoded_chars = []
 
     for ch in bitstring:
-        bit = int(ch)                # convert '0'/'1' → 0/1
+        bit = int(ch)  # convert '0'/'1' → 0/1
         reg = (state << 1) | bit
         out0 = bin(reg & G[0]).count('1') % 2
         out1 = bin(reg & G[1]).count('1') % 2
@@ -25,8 +33,6 @@ def add_error_fixer(bitstring):
         state = reg & ((1 << (K - 1)) - 1)
 
     return ''.join(encoded_chars)
-
-
 
 
 def fix_errors(received):
@@ -92,68 +98,3 @@ def fix_errors(received):
 
     # Return as a string of '0'/'1'
     return ''.join(str(b) for b in decoded_bits)
-
-# def fix_errors(received):
-#     """
-#     Viterbi decoder for the above convolutional code (hard-decision).
-#
-#     received: str or list of '0'/'1' characters (the encoded bitstream)
-#     returns: str of decoded '0'/'1' characters
-#     """
-#     # Convert input bits to integers
-#     rec_bits = [int(ch) for ch in received]
-#
-#     # Convolutional code parameters
-#     G = [0b111, 0b101]
-#     K = 3
-#     num_states = 1 << (K - 1)
-#
-#     # Precompute state transitions and expected output bits
-#     next_state = {}
-#     output = {}
-#     for s in range(num_states):
-#         for bit in [0, 1]:
-#             reg = (s << 1) | bit
-#             ns = reg & (num_states - 1)
-#             out0 = bin(reg & G[0]).count('1') % 2
-#             out1 = bin(reg & G[1]).count('1') % 2
-#             next_state[(s, bit)] = ns
-#             output[(s, bit)] = [out0, out1]
-#
-#     # Initialize path metrics (costs) and survivor paths
-#     path_metric = {s: float('inf') for s in range(num_states)}
-#     path_metric[0] = 0
-#     survivors = {s: [] for s in range(num_states)}
-#
-#     # Process received bits in pairs
-#     for i in range(0, len(rec_bits), 2):
-#         pair = rec_bits[i:i + 2]
-#         if len(pair) < 2:
-#             break  # incomplete pair, stop decoding
-#
-#         new_metric = {s: float('inf') for s in range(num_states)}
-#         new_surv = {s: [] for s in range(num_states)}
-#
-#         for s in range(num_states):
-#             if path_metric[s] == float('inf'):
-#                 continue
-#             for bit in [0, 1]:
-#                 ns = next_state[(s, bit)]
-#                 expected = output[(s, bit)]
-#                 # Hamming distance for hard-decision metric
-#                 branch_cost = abs(pair[0] - expected[0]) + abs(pair[1] - expected[1])
-#                 metric = path_metric[s] + branch_cost
-#                 if metric < new_metric[ns]:
-#                     new_metric[ns] = metric
-#
-#         path_metric = new_metric
-#         survivors = new_surv
-#
-#     # Select the best ending state and reconstruct the bit sequence
-#     end_state = min(path_metric, key=path_metric.get)
-#     decoded_bits = survivors[end_state]
-#
-#     # Return as a string of '0'/'1'
-#     return ''.join(str(b) for b in decoded_bits)
-
-

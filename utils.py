@@ -22,3 +22,14 @@ def binary_to_string(binary_text: str):
     if len(binary_text) % 8 != 0:
         binary_text = binary_text[:len(binary_text) - (len(binary_text) % 8)]
     return ''.join(chr(int(binary_text[i:i + 8], 2)) for i in range(0, len(binary_text), 8))
+
+
+def error_count(msg1: str, msg2: str) -> int:
+    """
+    Count the number of differing bits between two binary strings.
+    Returns -1 if the lengths are different.
+    """
+    if len(msg1) != len(msg2):
+        return -1  # or raise ValueError("Messages must be the same length")
+
+    return sum(b1 != b2 for b1, b2 in zip(msg1, msg2))
