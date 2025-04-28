@@ -1,14 +1,14 @@
 # Sampling & timing
 SAMPLE_RATE = 48_000    # samples per second when recording or playing back
-BIT_DURATION = 0.03     # seconds per bit tone
+BIT_DURATION = 0.1     # seconds per bit tone
 LISTEN_DURATION = 10    # seconds to record for each reception
 
 # Parallel channels: how many bits to send in parallel per symbol period
-N_CHANNELS = 8  # adjust this to your desired level of parallelism
+N_CHANNELS = 10  # adjust this to your desired level of parallelism
 
 # Frequency band to carve into 2 * N_CHANNELS tones
-FREQ_MIN = 21_200       # lower cutoff, below which we ignore frequency peaks
-FREQ_MAX = 23_800       # upper cutoff, above which we ignore
+FREQ_MIN = 20_500       # lower cutoff, below which we ignore frequency peaks
+FREQ_MAX = 23_500       # upper cutoff, above which we ignore
 
 # Dynamically generate 2*N_CHANNELS uniformly spaced frequencies
 import numpy as np
@@ -25,7 +25,7 @@ ZERO_FREQ = 22_500      # frequency used to encode a '0'
 ONE_FREQ = 23_500       # frequency used to encode a '1'
 BIT_FREQ_MAP = {ZERO: ZERO_FREQ, ONE: ONE_FREQ}
 
-# Padding used to frame the message\ nBIN_PAD = "1010101110001110101011100011"
+# Padding used to frame the message
 PAD = [
     [21551, 21226, 22573, 23493, 22320, 21268],
     [23931, 23200, 23775, 22212, 21484, 23231, 22355, 21239, 21607, 22988],
@@ -40,7 +40,9 @@ PAD = [
 ]
 
 # The actual text message to send/receive
-MESSAGE = "aaaaaaaaaaaa bbbbbbbbbbbbbb ccccccccccccccccc ddddddddddddddd 11111111111111 2222222222222222 333333333333333333 44444444444444"
+#MESSAGE = "AA BB aa bb cc dd 11 22 33 44 5 5 5 5 5"
+
+MESSAGE = "hey, what's up" #aaaaaaaaaaaa bbbbbbbbbbbbbb ccccccccccccccccc ddddddddddddddd 11111111111111 2222222222222222 333333333333333333 44444444444444"
 
 
 

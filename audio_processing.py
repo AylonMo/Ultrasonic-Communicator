@@ -128,31 +128,105 @@ def find_time_delays(pad_wave: np.ndarray,
     return (p_early, float(v_early)), (p_late, float(v_late))
 
 
-def process_audio_to_bits(msg_sig: np.ndarray) -> str:
+import numpy as np
+from scipy.fft import fft, fftfreq
 
+def quadratic_peak(mags: np.ndarray, idx: int) -> float:
+    """
+    Parabolic interpolation around a peak.
+    Returns the refined fractional bin location near idx.
+    """
+    if idx <= 0 or idx >= len(mags) - 1:
+        return idx  # can't interpolate at edges
+    alpha = mags[idx - 1]
+    beta = mags[idx]
+    gamma = mags[idx + 1]
+    p = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma)
+    return idx + p
+
+def process_audio_to_bits(msg_sig: np.ndarray) -> str:
     frame_len = int(BIT_DURATION * SAMPLE_RATE)
     num_frames = len(msg_sig) // frame_len
 
-    # collect bits per channel
     channel_bits = [[] for _ in range(N_CHANNELS)]
 
     for i in range(num_frames):
         frame = msg_sig[i * frame_len : (i + 1) * frame_len]
+
+        # Apply window to frame
+        window = np.hanning(len(frame))
+        windowed_frame = frame * window
+
+        # Zero-padding: pad to 2x length
+        padded_frame = np.pad(windowed_frame, (0, len(frame)), mode='constant')
+
+        # FFT
+        X = fft(padded_frame)
+        mags = np.abs(X)
+        freqs = fftfreq(len(padded_frame), 1 / SAMPLE_RATE)
+
+        # Keep only positive frequencies
+        half = len(mags) // 2
+        mags = mags[:half]
+        freqs = freqs[:half]
+
         for ch in range(N_CHANNELS):
             f0, f1 = FREQ_PAIRS[ch]
-            X = fft(frame)
-            mags = np.abs(X)
-            freqs = fftfreq(len(frame), 1 / SAMPLE_RATE)
+
+            # Find nearest bins
             idx0 = np.argmin(np.abs(freqs - f0))
             idx1 = np.argmin(np.abs(freqs - f1))
-            bit = '1' if mags[idx1] > mags[idx0] / 2 else '0'
+
+            # Quadratic interpolation
+            refined_idx0 = quadratic_peak(mags, idx0)
+            refined_idx1 = quadratic_peak(mags, idx1)
+
+            # Clip to legal range
+            refined_idx0 = np.clip(refined_idx0, 0, len(mags) - 1)
+            refined_idx1 = np.clip(refined_idx1, 0, len(mags) - 1)
+
+            # Compare magnitudes
+            mag0 = mags[int(round(refined_idx0))]
+            mag1 = mags[int(round(refined_idx1))]
+
+            bit = '1' if mag1 > mag0 / 2 else '0'
             channel_bits[ch].append(bit)
 
-    # reassemble bits in round-robin
+    # Reassemble bits in round-robin
     bits = []
     max_len = max(len(cb) for cb in channel_bits)
     for k in range(max_len):
         for ch in range(N_CHANNELS):
             if k < len(channel_bits[ch]):
                 bits.append(channel_bits[ch][k])
+
     return ''.join(bits)
+
+# def process_audio_to_bits(msg_sig: np.ndarray) -> str:
+#
+#     frame_len = int(BIT_DURATION * SAMPLE_RATE)
+#     num_frames = len(msg_sig) // frame_len
+#
+#     # collect bits per channel
+#     channel_bits = [[] for _ in range(N_CHANNELS)]
+#
+#     for i in range(num_frames):
+#         frame = msg_sig[i * frame_len : (i + 1) * frame_len]
+#         for ch in range(N_CHANNELS):
+#             f0, f1 = FREQ_PAIRS[ch]
+#             X = fft(frame)
+#             mags = np.abs(X)
+#             freqs = fftfreq(len(frame), 1 / SAMPLE_RATE)
+#             idx0 = np.argmin(np.abs(freqs - f0))
+#             idx1 = np.argmin(np.abs(freqs - f1))
+#             bit = '1' if mags[idx1] > mags[idx0] / 2 else '0'
+#             channel_bits[ch].append(bit)
+#
+#     # reassemble bits in round-robin
+#     bits = []
+#     max_len = max(len(cb) for cb in channel_bits)
+#     for k in range(max_len):
+#         for ch in range(N_CHANNELS):
+#             if k < len(channel_bits[ch]):
+#                 bits.append(channel_bits[ch][k])
+#     return ''.join(bits)

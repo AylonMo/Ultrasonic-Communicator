@@ -76,7 +76,7 @@ if __name__ == "__main__":
     print("Message is:", bin_message)
     print("Message length: ", len(bin_message))
 
-    bin_message = add_error_fixer(bin_message)
+    #bin_message = add_error_fixer(bin_message)
     print("Error safe message length: ", len(bin_message))
     print("Final message:", bin_message)
 
