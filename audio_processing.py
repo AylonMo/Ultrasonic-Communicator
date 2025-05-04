@@ -1,8 +1,9 @@
 import numpy as np
-from scipy.signal import butter, lfilter
-from scipy.fft import fft, fftfreq
 import matplotlib.pyplot as plt
 import sounddevice as sd
+from scipy.signal import butter, lfilter
+from scipy.fft import fft, fftfreq
+from datetime import datetime
 
 from consts import (
     SAMPLE_RATE,
@@ -16,13 +17,17 @@ from consts import (
 )
 
 
+# -------------------------------
+# Audio Playback and Recording
+# -------------------------------
+
 def get_pad_wave() -> np.ndarray:
     """
-    Generate the known pad preamble by concatenating each multi-frequency segment.
-    Each segment has fade-in and fade-out to reduce clicking.
+    Generate the pad waveform for synchronization using PAD frequencies.
+    Each segment fades in/out to reduce clicks.
     """
     segments = []
-    fade_samples = int(0.002 * SAMPLE_RATE)  # 2 ms fade
+    fade_samples = int(0.002 * SAMPLE_RATE)
     fade_in = np.linspace(0, 1, fade_samples)
     fade_out = np.linspace(1, 0, fade_samples)
 
@@ -31,47 +36,67 @@ def get_pad_wave() -> np.ndarray:
         segment = np.zeros_like(t)
         for f in freqs:
             segment += (0.5 / len(freqs)) * np.sin(2 * np.pi * f * t)
-
-        # Apply fade-in and fade-out
         segment[:fade_samples] *= fade_in
         segment[-fade_samples:] *= fade_out
-
         segments.append(segment)
 
     return np.concatenate(segments).astype(np.float32)
 
 
 def record_audio() -> np.ndarray:
-    """
-    Record audio for LISTEN_DURATION seconds at SAMPLE_RATE.
-    """
+    """Record mono audio for LISTEN_DURATION seconds."""
     rec = sd.rec(int(LISTEN_DURATION * SAMPLE_RATE), samplerate=SAMPLE_RATE, channels=1)
     sd.wait()
     return rec.flatten()
 
 
+def play_bit_tone(bits: list[int]) -> None:
+    """
+    Encode and play a bit sequence using multitone modulation with pad markers.
+    """
+    print(f"Message before padding: {bits}")
+    pad_wave = get_pad_wave()
+    chans = split_bits(bits, N_CHANNELS)
+    data_wave = get_multitone(chans)
+    full_wave = np.concatenate((pad_wave, data_wave, pad_wave))
+
+    print("Started transmitting at", datetime.now())
+    sd.play(full_wave, samplerate=SAMPLE_RATE)
+    sd.wait()
+    print("Finished transmitting at", datetime.now())
+
+
+# -------------------------------
+# Signal Processing Utilities
+# -------------------------------
+
 def bandpass_filter(data: np.ndarray, lowcut: float, highcut: float, fs: int, order: int = 5) -> np.ndarray:
-    """
-    Apply a Butterworth band-pass filter.
-    """
+    """Apply a Butterworth band-pass filter to the signal."""
     ny = 0.5 * fs
     b, a = butter(order, [lowcut / ny, highcut / ny], btype='band')
     return lfilter(b, a, data)
 
 
+def quadratic_peak(mags: np.ndarray, idx: int) -> float:
+    """
+    Parabolic interpolation around a spectral peak.
+    Returns a fractional index near the original peak.
+    """
+    if idx <= 0 or idx >= len(mags) - 1:
+        return idx
+    alpha, beta, gamma = mags[idx - 1], mags[idx], mags[idx + 1]
+    return idx + 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma)
+
+
+# -------------------------------
+# Spectrogram and Sync Detection
+# -------------------------------
+
 def plot_spectrogram(sig: np.ndarray, title: str = "Spectrogram") -> None:
-    """
-    Display a time‑frequency spectrogram of `sig` at SAMPLE_RATE Hz,
-    limited to the band 20000–24000 Hz.
-    """
+    """Plot the spectrogram of the input signal."""
     plt.figure(figsize=(10, 4))
-    Pxx, freqs, bins, im = plt.specgram(
-        sig,
-        Fs=SAMPLE_RATE,
-        NFFT=1024,
-        noverlap=512,
-    )
-    plt.ylim(FREQ_MIN-500, 24000)
+    plt.specgram(sig, Fs=SAMPLE_RATE, NFFT=1024, noverlap=512)
+    plt.ylim(FREQ_MIN - 500, 24000)
     plt.title(title)
     plt.xlabel("Time (s)")
     plt.ylabel("Frequency (Hz)")
@@ -79,48 +104,34 @@ def plot_spectrogram(sig: np.ndarray, title: str = "Spectrogram") -> None:
     plt.tight_layout()
     plt.show()
 
-def find_time_delays(pad_wave: np.ndarray,
-                     rec: np.ndarray,
-                     min_distance: int | None = None
-                    ) -> tuple[tuple[int, float], tuple[int, float]]:
+
+def find_time_delays(pad_wave: np.ndarray, rec: np.ndarray, min_distance: int | None = None) -> tuple[tuple[int, float], tuple[int, float]]:
     """
-    Cross-correlate pad_wave with rec, plot the correlation and mark
-    the two highest peaks (at least `min_distance` apart), and return
-    their indices + values in chronological order.
+    Locate pad positions in the recording via cross-correlation.
+    Returns two peak indices and their correlation strengths.
     """
     corr = np.correlate(rec, pad_wave, mode='valid')
-
-    # default min distance to one pad‑length if not specified
     if min_distance is None:
         min_distance = len(pad_wave)
 
-    # 1) find the global maximum
     p1 = int(np.argmax(corr))
 
-    # 2) mask out neighborhood around p1
     corr_masked = corr.copy()
-    start = max(0, p1 - min_distance)
-    end   = min(len(corr), p1 + min_distance + 1)
-    corr_masked[start:end] = -np.inf
-
-    # 3) next highest peak
+    corr_masked[max(0, p1 - min_distance):min(len(corr), p1 + min_distance + 1)] = -np.inf
     p2 = int(np.argmax(corr_masked))
 
-    # sort so the earlier peak comes first
     p_early, p_late = sorted([p1, p2])
     v_early, v_late = corr[p_early], corr[p_late]
 
-    # --- plot the full correlation and annotate peaks ---
+    # Plot annotated correlation
     plt.figure(figsize=(10, 4))
-    plt.plot(corr, label='cross-correlation')
-    plt.scatter([p_early, p_late], [v_early, v_late],
-                color='red', zorder=5,
-                label=f'peaks at {p_early}, {p_late}')
+    plt.plot(corr, label='Cross-correlation')
+    plt.scatter([p_early, p_late], [v_early, v_late], color='red', label='Pad Peaks')
     plt.axvline(p_early, color='red', linestyle='--', alpha=0.5)
     plt.axvline(p_late, color='red', linestyle='--', alpha=0.5)
-    plt.title("Cross‑correlation between recording and pad")
+    plt.title("Cross-correlation with pad signal")
     plt.xlabel("Lag (samples)")
-    plt.ylabel("Correlation amplitude")
+    plt.ylabel("Correlation")
     plt.legend()
     plt.tight_layout()
     plt.show()
@@ -128,23 +139,15 @@ def find_time_delays(pad_wave: np.ndarray,
     return (p_early, float(v_early)), (p_late, float(v_late))
 
 
-import numpy as np
-from scipy.fft import fft, fftfreq
+# -------------------------------
+# Bitstream Decoding
+# -------------------------------
 
-def quadratic_peak(mags: np.ndarray, idx: int) -> float:
+def process_audio_to_bits(msg_sig: np.ndarray) -> list[int]:
     """
-    Parabolic interpolation around a peak.
-    Returns the refined fractional bin location near idx.
+    Convert a multichannel audio signal into a list of bits.
+    Uses FFT and magnitude comparison to detect each channel's bit.
     """
-    if idx <= 0 or idx >= len(mags) - 1:
-        return idx  # can't interpolate at edges
-    alpha = mags[idx - 1]
-    beta = mags[idx]
-    gamma = mags[idx + 1]
-    p = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma)
-    return idx + p
-
-def process_audio_to_bits(msg_sig: np.ndarray) -> str:
     frame_len = int(BIT_DURATION * SAMPLE_RATE)
     num_frames = len(msg_sig) // frame_len
 
@@ -152,81 +155,73 @@ def process_audio_to_bits(msg_sig: np.ndarray) -> str:
 
     for i in range(num_frames):
         frame = msg_sig[i * frame_len : (i + 1) * frame_len]
+        windowed = frame * np.hanning(len(frame))
+        padded = np.pad(windowed, (0, len(frame)), mode='constant')
 
-        # Apply window to frame
-        window = np.hanning(len(frame))
-        windowed_frame = frame * window
-
-        # Zero-padding: pad to 2x length
-        padded_frame = np.pad(windowed_frame, (0, len(frame)), mode='constant')
-
-        # FFT
-        X = fft(padded_frame)
-        mags = np.abs(X)
-        freqs = fftfreq(len(padded_frame), 1 / SAMPLE_RATE)
-
-        # Keep only positive frequencies
-        half = len(mags) // 2
-        mags = mags[:half]
-        freqs = freqs[:half]
+        X = fft(padded)
+        mags = np.abs(X)[:len(X)//2]
+        freqs = fftfreq(len(padded), 1 / SAMPLE_RATE)[:len(X)//2]
 
         for ch in range(N_CHANNELS):
             f0, f1 = FREQ_PAIRS[ch]
-
-            # Find nearest bins
             idx0 = np.argmin(np.abs(freqs - f0))
             idx1 = np.argmin(np.abs(freqs - f1))
 
-            # Quadratic interpolation
-            refined_idx0 = quadratic_peak(mags, idx0)
-            refined_idx1 = quadratic_peak(mags, idx1)
+            mag0 = mags[int(round(np.clip(quadratic_peak(mags, idx0), 0, len(mags) - 1)))]
+            mag1 = mags[int(round(np.clip(quadratic_peak(mags, idx1), 0, len(mags) - 1)))]
 
-            # Clip to legal range
-            refined_idx0 = np.clip(refined_idx0, 0, len(mags) - 1)
-            refined_idx1 = np.clip(refined_idx1, 0, len(mags) - 1)
-
-            # Compare magnitudes
-            mag0 = mags[int(round(refined_idx0))]
-            mag1 = mags[int(round(refined_idx1))]
-
-            bit = '1' if mag1 > mag0 / 2 else '0'
+            bit = 1 if mag1 > mag0 / 2 else 0
             channel_bits[ch].append(bit)
 
-    # Reassemble bits in round-robin
+    # Interleave bits in round-robin order
     bits = []
-    max_len = max(len(cb) for cb in channel_bits)
-    for k in range(max_len):
+    max_len = max(len(ch) for ch in channel_bits)
+    for i in range(max_len):
         for ch in range(N_CHANNELS):
-            if k < len(channel_bits[ch]):
-                bits.append(channel_bits[ch][k])
+            if i < len(channel_bits[ch]):
+                bits.append(channel_bits[ch][i])
 
-    return ''.join(bits)
+    return bits
 
-# def process_audio_to_bits(msg_sig: np.ndarray) -> str:
-#
-#     frame_len = int(BIT_DURATION * SAMPLE_RATE)
-#     num_frames = len(msg_sig) // frame_len
-#
-#     # collect bits per channel
-#     channel_bits = [[] for _ in range(N_CHANNELS)]
-#
-#     for i in range(num_frames):
-#         frame = msg_sig[i * frame_len : (i + 1) * frame_len]
-#         for ch in range(N_CHANNELS):
-#             f0, f1 = FREQ_PAIRS[ch]
-#             X = fft(frame)
-#             mags = np.abs(X)
-#             freqs = fftfreq(len(frame), 1 / SAMPLE_RATE)
-#             idx0 = np.argmin(np.abs(freqs - f0))
-#             idx1 = np.argmin(np.abs(freqs - f1))
-#             bit = '1' if mags[idx1] > mags[idx0] / 2 else '0'
-#             channel_bits[ch].append(bit)
-#
-#     # reassemble bits in round-robin
-#     bits = []
-#     max_len = max(len(cb) for cb in channel_bits)
-#     for k in range(max_len):
-#         for ch in range(N_CHANNELS):
-#             if k < len(channel_bits[ch]):
-#                 bits.append(channel_bits[ch][k])
-#     return ''.join(bits)
+
+# -------------------------------
+# Transmission Helper Functions
+# -------------------------------
+
+def split_bits(bits: list[int], n: int) -> list[list[int]]:
+    """
+    Round-robin split of a bit list into `n` parallel channels.
+    """
+    chans = [[] for _ in range(n)]
+    for idx, b in enumerate(bits):
+        chans[idx % n].append(b)
+    return chans
+
+
+def get_multitone(chans: list[list[int]]) -> np.ndarray:
+    """
+    Generate a multitone waveform where each BIT_DURATION segment encodes one bit per channel.
+    Adds fade-in/out to reduce artifacts.
+    """
+    t = np.linspace(0, BIT_DURATION, int(SAMPLE_RATE * BIT_DURATION), endpoint=False)
+    fade_samples = int(0.002 * SAMPLE_RATE)
+    fade_in = np.linspace(0, 1, fade_samples)
+    fade_out = np.linspace(1, 0, fade_samples)
+    full_wave = np.array([], dtype=np.float32)
+
+    L = max(len(c) for c in chans)
+
+    for symbol_idx in range(L):
+        segment = np.zeros_like(t)
+        for i, chan in enumerate(chans):
+            bit = chan[symbol_idx] if symbol_idx < len(chan) else 0
+            f0, f1 = FREQ_PAIRS[i]
+            freq = f1 if bit == 1 else f0
+            segment += 0.5 * np.sin(2 * np.pi * freq * t)
+
+        segment /= N_CHANNELS
+        segment[:fade_samples] *= fade_in
+        segment[-fade_samples:] *= fade_out
+        full_wave = np.concatenate((full_wave, segment.astype(np.float32)))
+
+    return full_wave

@@ -1,31 +1,50 @@
-# Sampling & timing
-SAMPLE_RATE = 48_000    # samples per second when recording or playing back
-BIT_DURATION = 0.1     # seconds per bit tone
-LISTEN_DURATION = 10    # seconds to record for each reception
-
-# Parallel channels: how many bits to send in parallel per symbol period
-N_CHANNELS = 10  # adjust this to your desired level of parallelism
-
-# Frequency band to carve into 2 * N_CHANNELS tones
-FREQ_MIN = 20_500       # lower cutoff, below which we ignore frequency peaks
-FREQ_MAX = 23_500       # upper cutoff, above which we ignore
-
-# Dynamically generate 2*N_CHANNELS uniformly spaced frequencies
 import numpy as np
+
+# -------------------------------
+# Timing and Sampling Parameters
+# -------------------------------
+
+SAMPLE_RATE = 48_000       # Sampling rate in Hz
+BIT_DURATION = 0.04        # Duration of a bit in seconds
+LISTEN_DURATION = 24       # Maximum duration to record (seconds)
+
+
+# -------------------------------
+# Channel and Frequency Settings
+# -------------------------------
+
+N_CHANNELS = 6             # Number of parallel channels (bits per frame)
+
+FREQ_MIN = 20_500          # Minimum frequency used (Hz)
+FREQ_MAX = 23_500          # Maximum frequency used (Hz)
+
+# Generate 2*N_CHANNELS frequencies linearly spaced in band
 _all_freqs = np.linspace(FREQ_MIN, FREQ_MAX, 2 * N_CHANNELS)
-FREQ_PAIRS = list(zip(_all_freqs[0::2], _all_freqs[1::2]))
+
 # FREQ_PAIRS[i] = (freq_for_0, freq_for_1) for channel i
+FREQ_PAIRS = list(zip(_all_freqs[0::2], _all_freqs[1::2]))
 
-# Bit definitions
-ZERO = '0'              # symbol for a “0” bit
-ONE = '1'               # symbol for a “1” bit
 
-# Original single‑channel bit frequencies (for backward compatibility)
-ZERO_FREQ = 22_500      # frequency used to encode a '0'
-ONE_FREQ = 23_500       # frequency used to encode a '1'
-BIT_FREQ_MAP = {ZERO: ZERO_FREQ, ONE: ONE_FREQ}
+# -------------------------------
+# Single-Channel (Legacy) Frequencies
+# -------------------------------
 
-# Padding used to frame the message
+ZERO = '0'
+ONE = '1'
+
+ZERO_FREQ = 22_500         # Frequency for binary 0
+ONE_FREQ = 23_500          # Frequency for binary 1
+
+BIT_FREQ_MAP = {
+    ZERO: ZERO_FREQ,
+    ONE: ONE_FREQ
+}
+
+
+# -------------------------------
+# Padding Sequences (for framing)
+# -------------------------------
+
 PAD = [
     [21551, 21226, 22573, 23493, 22320, 21268],
     [23931, 23200, 23775, 22212, 21484, 23231, 22355, 21239, 21607, 22988],
@@ -38,12 +57,4 @@ PAD = [
     [22046, 23577, 22974, 23859, 23139, 21313, 22580],
     [21606, 21683, 22946, 22726]
 ]
-
-# The actual text message to send/receive
-#MESSAGE = "AA BB aa bb cc dd 11 22 33 44 5 5 5 5 5"
-
-MESSAGE = "hey, what's up" #aaaaaaaaaaaa bbbbbbbbbbbbbb ccccccccccccccccc ddddddddddddddd 11111111111111 2222222222222222 333333333333333333 44444444444444"
-
-
-
 
