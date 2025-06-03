@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 from audio_processing import play_bit_tone
 from data_management import add_error_fixer, add_preamble
@@ -33,35 +34,30 @@ def prepare_bits(bits: list[int]) -> list[int]:
     return framed
 
 
-def send_image(path: str):
-    """Load, prepare, and transmit an image file over audio."""
-    raw = load_image_bits(path)
+def send_bits(loader, src, label="data"):
+    """
+    Generalized sending function.
+    loader: function to load bits (e.g., load_image_bits or load_text_bits)
+    src: argument to loader (image path or text)
+    label: label for reporting
+    """
+    start = datetime.now()
+    raw = loader(src)
     tx = prepare_bits(raw)
-    print("Starting image transmission at", datetime.now())
     play_bit_tone(tx)
-    print("Finished image transmission at", datetime.now())
-
-
-def send_text(text: str):
-    """Load, prepare, and transmit a text message over audio."""
-    raw = load_text_bits(text)
-    tx = prepare_bits(raw)
-    print("Starting text transmission at", datetime.now())
-    play_bit_tone(tx)
-    print("Finished text transmission at", datetime.now())
-
-
-def main():
-    # === Choose one of the following ===
-
-    # 1) Transmit an image:
-    send_image("./images/eye3.jpg")
-
-    # 2) Transmit text:
-    # send_text("This is just another message, nothing special. But tell me, can you read it???")
-
-    # ================================
+    duration = (datetime.now() - start).total_seconds()
+    print(f"[{label}] Transmission complete in {duration:.2f}s")
 
 
 if __name__ == "__main__":
-    main()
+    # === Choose transmission type ===
+
+    # To send an image:
+    img_path = Path("./images/bunny.jpg")
+    send_bits(load_image_bits, str(img_path), label="image")
+
+    # To send text:
+    # message = "This is just another message, nothing special. But tell me, can you read it???"
+    # send_bits(load_text_bits, message, label="text")
+
+    # ================================
